@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(Test-Path \"C:\\\\Users\\\\Rishi\\\\PROJECTS\\\\it-audit-mcp\\\\.env\")",
+      "Bash(git init:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}
