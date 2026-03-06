@@ -20,6 +20,7 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+nul
 
 # Test
 .pytest_cache/
