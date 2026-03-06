@@ -76,18 +76,22 @@ Supabase project: `inhioznyfkjcvjfepdxq` (AuditMCP, eu-central-1)
 - testing_procedures (step-by-step audit test steps)
 - evidence_requirements (also linked via risk_control_mapping_id)
 
-### Seeded data (as of 2026-03-06):
-| Process | Risks | Controls | Test Procs | Evidence |
-|---------|-------|----------|------------|----------|
-| P04 Change Management | 73 | 54 | 178 | 131 |
-| P07 Logical Access Mgmt | 43 | 32 | 122 | 72 |
-| P08 Privileged Access Mgmt | 27 | 20 | 79 | 46 |
-| P12 Data Protection & Privacy | 30 | 22 | 96 | 61 |
-| P16 Incident Management | 29 | 21 | 87 | 60 |
-| P20 Disaster Recovery | 30 | 22 | 91 | 55 |
-| **Totals** | **232** | **171** | **653** | **425** |
+### Seeded data (as of 2026-03-07):
 
-The other 24 processes (P01-P03, P05-P06, P09-P11, P13-P15, P17-P19, P21-P30) have names in audit_processes but no risks/controls.
+All 30 processes (P01-P30) are now populated. The 6 original processes were seeded organically with full depth. The remaining 23 were initially templated (3 sub-risks per phase), then augmented via framework gap analysis against COBIT 2019, ISO 27001:2022, NIST CSF 2.0, FFIEC, and SOC 2.
+
+**Knowledge base totals (all 30 processes combined):**
+| Metric | Count |
+|--------|-------|
+| Parent risks | 255 |
+| Sub-risks | 832 |
+| Risk-control mappings | 832 |
+| Testing procedures | 3,329 |
+| Evidence requirements | 2,408 |
+
+**Notable:** P09 Information Security was the largest augmentation — gained a new Phase 8 (Mobile, Remote & Endpoint Security) with parent risk IS8.P and 4 sub-risks (IS8.1-IS8.4), plus 8 additional sub-risks across existing phases.
+
+Each sub-risk follows the standard pattern: 1 risk row + 1 risk_control_mapping + 4 testing_procedures + 3 evidence_requirements. Parent risks have NO control mappings — controls only attach to sub-risks (leaf nodes).
 
 5 frameworks seeded: COBIT 2019, ISO 27001:2022, NIST CSF 2.0, FFIEC IT, SOC 2 TSC.
 
@@ -152,6 +156,10 @@ Claude should learn from mistakes across sessions. Follow this process:
 - NEVER assume process codes map to names — query the database (P01 is NOT Access Management)
 - NEVER use 'system' or 'system_type' in tool parameters — this is a process audit tool, not a system audit tool
 - NEVER hardcode confidence scores — always compute from actual data or LLM output
+- ALWAYS use column name `code` (not `process_code`) when querying `audit_processes` table
+- ALWAYS use valid `evidence_type` values: document, report, config, log, screenshot, observation, interview (NOT 'record')
+- ALWAYS use `risk_level` 1 or 2 only — check constraint rejects level 3
+- NEVER add control mappings to parent risks — controls only attach to sub-risks (leaf nodes)
 
 ## Open: Hardcoded Numbers to Fix
 

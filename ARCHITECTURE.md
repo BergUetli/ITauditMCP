@@ -355,9 +355,10 @@ Organized into 7 categories. Full detail in Knowledge_Base_Architecture.xlsx.
 | Data & Reporting | P29 Data Mgmt, P30 Regulatory Reporting | HIGH for banking |
 
 ### Build order:
-- **Tier 1** (banking essentials): P04 (done), P07, P08, P10, P16, P19, P20, P27
-- **Tier 2** (complete banking): P01, P02, P05, P09, P11, P12, P18, P21, P22, P29, P30
-- **Tier 3** (full coverage): Everything else
+- ~~**Tier 1** (banking essentials): P04, P07, P08, P10, P16, P19, P20, P27~~ — DONE
+- ~~**Tier 2** (complete banking): P01, P02, P05, P09, P11, P12, P18, P21, P22, P29, P30~~ — DONE
+- ~~**Tier 3** (full coverage): Everything else~~ — DONE
+- All 30 processes populated as of 2026-03-07 via framework gap analysis
 
 ---
 
@@ -406,15 +407,15 @@ licensing@isaca.org on 2026-03-06 to clarify scope and cost.
 
 | Item | Priority | Notes |
 |------|----------|-------|
-| Schema migration (process-centric tables) | HIGH | Needed before seeding data properly |
-| Seed data (Change Management — 54 sub-risks) | HIGH | Draft done, needs schema first |
-| Seed data (COBIT 2019 + ISO 27001 frameworks) | HIGH | Framework reference data |
-| Cross-framework mapping seed data | HIGH | The highest-value feature |
-| RP's banking interpretations | HIGH | The moat — encode your experience |
-| Tier 1 GITC processes | HIGH | Access mgmt, cybersecurity, incident mgmt, BCP, DR, vendor risk |
-| First application control template | MEDIUM | Trading system or core banking |
+| ~~Schema migration (process-centric tables)~~ | ~~DONE~~ | 12 migrations applied |
+| ~~Seed data (6 core processes)~~ | ~~DONE~~ | P04, P07, P08, P12, P16, P20 — organically seeded with full depth |
+| ~~Knowledge base gap analysis (23 templated processes)~~ | ~~DONE~~ | P01-P03, P05-P06, P09-P11, P13-P15, P17-P19, P21-P30 augmented via framework gap analysis against COBIT 2019, ISO 27001, NIST CSF 2.0, FFIEC, SOC 2. All 30 processes now populated: 255 parent risks, 832 sub-risks, 3,329 test procedures, 2,408 evidence requirements |
 | ~~Scoping engine (keywords layer)~~ | ~~DONE~~ | `retriever.find_process_candidates()` — deep keyword matching |
 | ~~Scoping engine (LLM layer)~~ | ~~DONE~~ | `pipeline.resolve_process()` — hybrid keyword+LLM resolution |
+| Cross-framework mapping seed data | HIGH | The highest-value feature |
+| RP's banking interpretations | HIGH | The moat — encode your experience |
+| First application control template | MEDIUM | Trading system or core banking |
+| Hardcoded numbers cleanup | MEDIUM | See CLAUDE.md "Open: Hardcoded Numbers to Fix" |
 | Test suite | MEDIUM | Unit tests for quality gates, integration tests for pipeline |
 | OAuth 2.1 authentication | MEDIUM | Needed before going live |
 | Stripe billing integration | MEDIUM | Needed for revenue |
