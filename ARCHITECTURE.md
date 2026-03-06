@@ -270,13 +270,16 @@ Flow: Auditor selects audit process → system provides risks, controls, testing
 procedures, evidence requirements for that process. Deep and focused.
 
 ### Entry Point B — Business Process Audit (bottom-up)
-Auditor comes in with a business context that has IT systems embedded in it.
-Example: "We're auditing the trading desk. They use a proprietary trading
-application and Bloomberg Terminal."
+Auditor comes in with a business context described in plain English.
+Example: "We want to audit how the bank handles employee joiners and leavers
+and their access to systems."
 
-Flow: Auditor describes business context → system detects application(s) in
-use → scoping engine suggests relevant audit topics (both GITCs and application
-controls) → auditor confirms/adjusts scope → system goes deep on selected topics.
+Flow (two-tool design):
+1. Agent calls `scope_audit(process_description, scope_decisions)` →
+   hybrid keyword+LLM matching resolves description to process codes →
+   returns matched programmes with summaries and scope boundaries.
+2. Agent calls `get_audit_content(process_code, risk_focus?)` for each
+   matched code → returns full risks, controls, testing procedures, evidence.
 
 ### Why both matter:
 Some audits are purely IT-driven (e.g., "Global Change Management review").
@@ -309,29 +312,30 @@ Out of scope for v1 — architecture should not prevent adding later.
 
 ---
 
-## Decision: Scoping Engine (Hybrid Rules + LLM)
+## Decision: Scoping Engine (Hybrid Keywords + LLM)
 
-When a user describes a business context (Entry Point B), the system figures
+When a user describes a business process (Entry Point B), the system figures
 out what's relevant using two layers:
 
-### Rules-based layer (deterministic, always runs)
-When an application is detected:
-- ALWAYS flag: Access Management, Change Management, BCP/DR
-- ALWAYS flag: Application controls for the specific app type
-- IF externally facing → Cybersecurity, Network Security
-- IF handles financial data → Data Management, Regulatory Reporting
-- IF cloud-hosted → Cloud Computing, Vendor Risk
-- IF handles PII → Data Protection & Privacy
+### Keywords layer (deterministic, always runs first)
+`retriever.find_process_candidates()` builds a rich text blob for each seeded
+process from its name, description, category, phase names, risk descriptions,
+and control descriptions. Scores by word overlap with the input. This catches
+vocabulary matches that process names alone would miss — e.g. "employee leavers"
+matches Logical Access Management via the "Deprovisioning" phase and risk
+descriptions about "timely removal of access upon termination."
 
-### LLM layer (reasoning, suggests additional topics)
-Takes business context and reasons about what else to consider.
-Example: "Trading desk processes high-value real-time transactions →
-also consider job scheduling for EOD reconciliation, and End User
-Computing risk if spreadsheets feed into trade data."
+### LLM layer (reasoning, confirms/adjusts keyword results) — DONE
+`pipeline.resolve_process()` sends keyword candidates + the full programme list
+to the LLM via `PROCESS_RESOLVER_PROMPT`. The LLM picks which programmes are
+genuinely relevant (high/medium/low) and can catch matches keywords missed —
+e.g. recognising that "who can approve payments" implies Privileged Access
+Management even if keyword overlap is low.
 
 ### Auditor feedback loop
-System presents suggestions with reasoning. Auditor can accept, remove,
-add, or adjust priority. Feedback improves rules over time.
+The calling agent presents matched programmes with relevance and reasoning.
+The auditor can accept, remove, add, or adjust priority. Feedback improves
+rules over time.
 
 ---
 
@@ -409,11 +413,11 @@ licensing@isaca.org on 2026-03-06 to clarify scope and cost.
 | RP's banking interpretations | HIGH | The moat — encode your experience |
 | Tier 1 GITC processes | HIGH | Access mgmt, cybersecurity, incident mgmt, BCP, DR, vendor risk |
 | First application control template | MEDIUM | Trading system or core banking |
-| Scoping engine (rules layer) | MEDIUM | Enables Entry Point B |
+| ~~Scoping engine (keywords layer)~~ | ~~DONE~~ | `retriever.find_process_candidates()` — deep keyword matching |
+| ~~Scoping engine (LLM layer)~~ | ~~DONE~~ | `pipeline.resolve_process()` — hybrid keyword+LLM resolution |
 | Test suite | MEDIUM | Unit tests for quality gates, integration tests for pipeline |
 | OAuth 2.1 authentication | MEDIUM | Needed before going live |
 | Stripe billing integration | MEDIUM | Needed for revenue |
 | Web demo wrapper | MEDIUM | Sales tool, not the product |
-| Scoping engine (LLM layer) | LOW | Enhancement to rules-based scoping |
 | Usage pattern detection | LOW | Part of learning loop, needs usage data |
 | Semantic search (pgvector) | LOW | Needed for voice SaaS, not MCP server |

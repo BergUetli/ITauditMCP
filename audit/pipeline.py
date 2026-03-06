@@ -19,7 +19,9 @@ from audit.prompts import (
     EVIDENCE_ASSESSOR_PROMPT,
     FINDING_GENERATOR_PROMPT,
     FRAMEWORK_MAPPER_PROMPT,
+    PROCESS_RESOLVER_PROMPT,
 )
+import json
 import time
 
 
@@ -54,6 +56,175 @@ class AuditPipeline:
         self.engine = engine or LLMEngine()
         self.input_gate = input_gate or InputGate()
         self.output_gate = output_gate or OutputGate(self.store)
+
+    async def resolve_process(self, description: str) -> list[dict]:
+        """Match a plain-English process description to audit programme codes.
+
+        Two-step resolution:
+        Step A — Keyword matching via retriever.find_process_candidates().
+                 Searches process names, phase names, risk descriptions, and
+                 control descriptions for word overlap.
+        Step B — LLM reasoning to confirm/adjust matches. Gets the keyword
+                 scores as hints plus the full list of available programmes
+                 so it can catch matches that keywords missed.
+
+        Args:
+            description: Free-text description of the process being audited.
+
+        Returns:
+            List of dicts with process_code, relevance, and reasoning.
+            Example: [{"process_code": "P07", "relevance": "high", "reasoning": "..."}]
+        """
+        # Step A: keyword candidates from the knowledge layer
+        candidates = self.retriever.find_process_candidates(description)
+
+        # Build LLM context with keyword results + full programme list
+        # Cache phase lookups — each process's phases are used in both sections
+        phases_by_id: dict[str, list] = {}
+        for process, _ in candidates:
+            if process.id:
+                phases_by_id[process.id] = self.store.get_phases_for_process(process.id)
+
+        context_lines = []
+
+        # Section 1: keyword match results
+        context_lines.append("# Keyword Match Candidates\n")
+        has_keyword_hits = False
+        for process, score in candidates:
+            if score > 0:
+                has_keyword_hits = True
+                phase_names = ", ".join(p.name for p in phases_by_id.get(process.id, []))
+                context_lines.append(
+                    f"- **{process.code}** {process.name} (score: {score:.2f})\n"
+                    f"  Phases: {phase_names}"
+                )
+        if not has_keyword_hits:
+            context_lines.append("- No keyword matches found.")
+
+        # Section 2: full list so the LLM can catch what keywords missed
+        context_lines.append("\n# All Available Audit Programmes\n")
+        for process, _ in candidates:
+            phase_names = ", ".join(p.name for p in phases_by_id.get(process.id, []))
+            context_lines.append(
+                f"- **{process.code}** {process.name} ({process.category})\n"
+                f"  {process.description or 'No description'}\n"
+                f"  Phases: {phase_names}"
+            )
+
+        context = "\n".join(context_lines)
+
+        # Step B: LLM decides which programmes apply
+        llm_response = await self.engine.analyze_single(
+            context=context,
+            question=f"Match this process description to audit programmes:\n\n{description}",
+            system_prompt=PROCESS_RESOLVER_PROMPT,
+        )
+
+        # Parse JSON from LLM response
+        try:
+            raw = llm_response.content.strip()
+            # Strip markdown code fences if the LLM wraps its response
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+                raw = raw.rsplit("```", 1)[0]
+            result = json.loads(raw)
+            if isinstance(result, list):
+                return result
+        except (json.JSONDecodeError, IndexError, KeyError):
+            pass
+
+        # Fallback: if LLM returned garbage, use keyword top match.
+        # 0.3 = at least 30% of the description words appear in the process
+        # vocabulary. Below that the match is too weak to trust without LLM.
+        keyword_fallback_threshold = 0.3
+        if candidates and candidates[0][1] > keyword_fallback_threshold:
+            top_process, top_score = candidates[0]
+            # Derive relevance from keyword score instead of hardcoding
+            if top_score > 0.6:
+                fallback_relevance = "high"
+            elif top_score > 0.4:
+                fallback_relevance = "medium"
+            else:
+                fallback_relevance = "low"
+            return [{"process_code": top_process.code, "relevance": fallback_relevance,
+                     "reasoning": f"Keyword match (score {top_score:.2f}), LLM response was unusable"}]
+
+        return [{"process_code": "NONE", "relevance": "none",
+                 "reasoning": "No matching audit programmes found"}]
+
+    async def scope_audit(
+        self, process_description: str, scope_decisions: str
+    ) -> AuditResult:
+        """Match a process description to audit programmes and return scoped content.
+
+        Calls resolve_process() to identify relevant programmes, then retrieves
+        a summary for each matched programme. scope_decisions is included in the
+        output so the calling agent knows what's in and out of scope.
+
+        Args:
+            process_description: Plain-English description of the process being audited.
+                Example: "We want to audit how the bank handles employee joiners
+                and leavers and their access to systems."
+            scope_decisions: Agreed scope — focus areas, exclusions, depth, timeframe.
+                Example: "Focus on privileged accounts only, exclude general user
+                access, cover last 12 months."
+
+        Returns:
+            AuditResult with matched programmes, their summaries, and scope boundaries.
+        """
+        start = time.time()
+
+        # Step 1: resolve which programmes are relevant
+        matches = await self.resolve_process(process_description)
+
+        # Step 2: build output with summaries for each matched programme
+        content_parts = []
+        content_parts.append("# Audit Scope\n")
+        content_parts.append(f"**Process described:** {process_description}\n")
+        content_parts.append(f"**Scope decisions:** {scope_decisions}\n")
+        content_parts.append("---\n")
+
+        for match in matches:
+            code = match.get("process_code", "")
+            relevance = match.get("relevance", "")
+            reasoning = match.get("reasoning", "")
+
+            if code == "NONE":
+                content_parts.append(
+                    "No matching audit programmes found in the knowledge base.\n"
+                    f"Reason: {reasoning}"
+                )
+                continue
+
+            ctx = self.retriever.get_process_context(code)
+            if ctx:
+                content_parts.append(
+                    f"## {ctx.process.name} [{relevance.upper()}]\n"
+                    f"*{reasoning}*\n"
+                )
+                content_parts.append(ctx.to_summary())
+                content_parts.append("")
+            else:
+                content_parts.append(
+                    f"## {code} [{relevance.upper()}] — no data loaded yet\n"
+                    f"*{reasoning}*\n"
+                )
+
+        # Compute confidence from the LLM's relevance ratings rather than hardcoding
+        relevance_weights = {"high": 0.9, "medium": 0.7, "low": 0.5, "none": 0.2}
+        relevance_scores = [
+            relevance_weights.get(m.get("relevance", "none"), 0.5)
+            for m in matches
+        ]
+        confidence = sum(relevance_scores) / len(relevance_scores) if relevance_scores else 0.3
+
+        elapsed = int((time.time() - start) * 1000)
+
+        return AuditResult(
+            content="\n".join(content_parts),
+            confidence_score=confidence,
+            response_time_ms=elapsed,
+        )
 
     async def parse_process(
         self, process_text: str

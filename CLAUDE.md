@@ -28,13 +28,14 @@ Comment all code thoroughly. Explain what functions do, not just how.
 ### `knowledge/` — Database models and access
 - `models.py` — Pydantic models for ALL tables: Framework, Domain, Control, ControlMapping, IndustryOverlay, EvidenceRequirement, Interpretation, Feedback, UsageLog, **AuditProcess, ProcessPhase, Risk, RiskControlMapping, TestingProcedure**
 - `store.py` — Supabase CRUD layer. Framework-centric methods (get_control_by_code, get_mappings_for_control, etc.) AND process-centric methods (get_audit_process_by_code, get_risks_for_process, get_testing_procedures, etc.)
-- `retriever.py` — Assembles full context for LLM injection. Has `ControlContext` (framework-centric) and `ProcessContext` (process-centric) with `to_llm_context()` formatters.
+- `retriever.py` — Assembles full context for LLM injection. Has `ControlContext` (framework-centric) and `ProcessContext` (process-centric) with `to_llm_context()` formatters. `find_process_candidates()` does deep keyword matching against process names, phase names, risk descriptions, and control descriptions.
 
 ### `tools/` — MCP tool definitions
-- `audit_tools.py` — All MCP tools AI agents call. Pipeline tools (parse_process, identify_risks, etc.) AND knowledge base tools (list_audit_processes, get_process_detail, get_risks_for_process, get_testing_procedures_for_risk, etc.)
+- `audit_tools.py` — All MCP tools AI agents call. Pipeline tools (parse_process, identify_risks, etc.), knowledge base tools (list_audit_processes, get_process_detail, etc.), and Entry Point B tools (`scope_audit`, `get_audit_content`).
 
 ### `audit/` — Pipeline orchestration
-- `pipeline.py` — Main audit pipeline: Input Gate → Knowledge Retrieval → LLM Analyst → LLM Reviewer → Output Gate
+- `pipeline.py` — Main audit pipeline: Input Gate → Knowledge Retrieval → LLM Analyst → LLM Reviewer → Output Gate. Also has `resolve_process()` (hybrid keyword+LLM process matching) and `scope_audit()` (Entry Point B orchestration).
+- `prompts.py` — System prompts for each pipeline function. Includes `PROCESS_RESOLVER_PROMPT` for matching descriptions to audit programmes.
 
 ### `quality/` — Deterministic validation gates
 - `input_gate.py` — Regex-based input normalization and validation
@@ -149,3 +150,26 @@ Claude should learn from mistakes across sessions. Follow this process:
 - ALWAYS check with RP before creating new files
 - ALWAYS use plpgsql DO blocks for seeding hierarchical data (parent ID needed for children)
 - NEVER assume process codes map to names — query the database (P01 is NOT Access Management)
+- NEVER use 'system' or 'system_type' in tool parameters — this is a process audit tool, not a system audit tool
+- NEVER hardcode confidence scores — always compute from actual data or LLM output
+
+## Open: Hardcoded Numbers to Fix
+
+All confidence scores and thresholds must be computed or configurable — no made-up numbers.
+
+### In new code (scope/resolve tools — this session)
+- `audit/pipeline.py:139` — `keyword_fallback_threshold = 0.3` in `resolve_process()`. Remove the threshold entirely. If LLM fails, return ALL keyword candidates with score > 0, derive relevance from rank position not arbitrary bins.
+- `audit/pipeline.py:143,145` — `0.6` and `0.4` bins for mapping keyword scores to relevance. Remove when fallback is reworked.
+- `audit/pipeline.py:214` — `relevance_weights = {"high": 0.9, "medium": 0.7, "low": 0.5, "none": 0.2}` in `scope_audit()`. These map LLM categorical output to numeric confidence. Move to `config/settings.py` so they're visible and tunable.
+- `audit/pipeline.py:219` — `0.3` fallback confidence when zero matches. Should be derived, not invented.
+
+### In pre-existing code
+- `audit/pipeline.py:252` — `confidence_score=0.8` in `parse_process()`. Same problem already fixed in `scope_audit()`. Needs same treatment.
+- `quality/output_gate.py:66` — `confidence_score = 0.7` "Neutral default". Should be computed from validation results.
+- `llm/engine.py:178` — `overlap > 0.7` similarity threshold for detecting reviewer changes. Magic number.
+- `llm/anthropic_provider.py:25`, `llm/openai_provider.py:37` — `temperature = 0.3` should be in `config/settings.py`, not buried in provider code.
+
+### Already fine (documented design decisions)
+- `0.5` starting confidence, `0.02` boost, `0.05` reduction — documented in `.claude/rules/knowledge-engine.md`
+- Model field defaults in `models.py` — starting values for new database records
+- `config/settings.py` MIN_CONFIDENCE_THRESHOLD — already configurable via .env

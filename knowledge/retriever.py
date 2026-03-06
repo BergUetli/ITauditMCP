@@ -1,6 +1,7 @@
 """Assembles full audit context from multiple knowledge store lookups.
 Combines controls, mappings, overlays, evidence, and expert interpretations into rich LLM context."""
 
+import re
 from dataclasses import dataclass, field
 from knowledge.store import KnowledgeStore
 from knowledge.models import (
@@ -355,3 +356,84 @@ class KnowledgeRetriever:
                 if risks:
                     populated.append(p)
         return populated
+
+    def find_process_candidates(self, description: str) -> list[tuple[AuditProcess, float]]:
+        """Match a plain-English description against all seeded audit processes.
+
+        Builds a rich searchable text blob for each process from its name, description,
+        category, phase names, risk descriptions (parent and sub), and control
+        descriptions. Scores by word overlap with the input description.
+
+        This is where the real vocabulary lives. "Employee leavers" won't match
+        "Logical Access Management" by name, but it WILL match the phase name
+        "Deprovisioning" or a sub-risk about "timely removal of access."
+
+        Args:
+            description: Free-text description of the process being audited.
+
+        Returns:
+            All populated processes as (process, score) tuples, sorted by score
+            descending. Score-0 processes appear at the end so the LLM layer
+            can still see everything.
+        """
+        processes = self.list_populated_processes()
+        if not processes:
+            return []
+
+        # Tokenise input: lowercase words of 2+ chars, strip stop words
+        desc_words = set(re.findall(r'\b[a-z]{2,}\b', description.lower()))
+        stop_words = {
+            'the', 'a', 'an', 'and', 'or', 'for', 'in', 'of', 'to', 'is',
+            'are', 'with', 'how', 'what', 'on', 'by', 'from', 'we', 'our',
+            'their', 'this', 'that', 'be', 'has', 'have', 'do', 'does', 'was',
+            'were', 'been', 'will', 'would', 'should', 'could', 'can', 'may',
+            'might', 'shall', 'must', 'want', 'need', 'like', 'also', 'its',
+            'it', 'they', 'them', 'he', 'she', 'not', 'no', 'but', 'if', 'so',
+            'at', 'as', 'up', 'out', 'about',
+        }
+        desc_words -= stop_words
+
+        if not desc_words:
+            return [(p, 0.0) for p in processes]
+
+        scored: list[tuple[AuditProcess, float]] = []
+
+        for process in processes:
+            if not process.id:
+                scored.append((process, 0.0))
+                continue
+
+            # Build a searchable blob from every text field in this process
+            text_parts = [
+                process.name or '',
+                process.description or '',
+                process.category or '',
+            ]
+
+            # Phase names and descriptions (e.g. "Deprovisioning")
+            phases = self.store.get_phases_for_process(process.id)
+            for phase in phases:
+                text_parts.append(phase.name or '')
+                text_parts.append(phase.description or '')
+
+            # All risk descriptions — parent and sub-risk
+            risks = self.store.get_risks_for_process(process.id)
+            for risk in risks:
+                text_parts.append(risk.description or '')
+
+            # All control descriptions from risk-control mappings
+            mappings = self.store.get_all_mappings_for_process(process.id)
+            for mapping in mappings:
+                text_parts.append(mapping.control_description or '')
+
+            searchable = ' '.join(text_parts).lower()
+            process_words = set(re.findall(r'\b[a-z]{2,}\b', searchable))
+
+            overlap = len(desc_words & process_words)
+            score = overlap / len(desc_words)
+
+            scored.append((process, score))
+
+        # Sort by score descending — zero-score processes at the end
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored

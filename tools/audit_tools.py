@@ -201,6 +201,107 @@ def register_tools(mcp: FastMCP):
         return f"Risk code '{risk_code}' not found in process '{process_code}'."
 
     # ================================================================
+    # SCOPE AND CONTENT TOOLS (Entry Point B — Natural Language)
+    # ================================================================
+
+    @mcp.tool()
+    async def scope_audit(process_description: str, scope_decisions: str) -> str:
+        """Match a plain-English description of the business process being audited to
+        the relevant audit programme(s), filtered by agreed scope.
+
+        Call this when the auditor describes a process in natural language and you need
+        to figure out which audit programmes apply. Returns matched programmes with
+        summaries and scope boundaries.
+
+        Args:
+            process_description: What the client described about the process to audit.
+                Example: "We want to audit how the bank handles employee joiners and
+                leavers and their access to systems."
+            scope_decisions: What was agreed about scope — focus areas, exclusions,
+                depth, timeframe. Example: "Focus on privileged accounts only,
+                exclude general user access, cover last 12 months."
+        """
+        result = await _pipeline.scope_audit(process_description, scope_decisions)
+        return _format_result(result)
+
+    @mcp.tool()
+    async def get_audit_content(
+        process_code: str, risk_focus: Optional[str] = None
+    ) -> str:
+        """Retrieve the full audit programme for a known process code.
+
+        Call scope_audit first to identify the right process code(s). Then call
+        this tool for each process code to get the detailed risks, controls,
+        testing procedures, and evidence requirements.
+
+        Args:
+            process_code: Internal process code (e.g., 'P04', 'P07').
+            risk_focus: Optional — filter to specific risk areas within the
+                programme. Example: "privileged accounts" or "deprovisioning".
+        """
+        ctx = _retriever.get_process_context(process_code)
+        if not ctx:
+            return f"Process '{process_code}' not found or has no data."
+
+        # No filter — return the full programme
+        if not risk_focus:
+            return ctx.to_llm_context()
+
+        # Filter output to phases/risks that mention the focus term
+        focus_lower = risk_focus.lower()
+        parts = [f"# Audit Programme: {ctx.process.name}"]
+        parts.append(f"**Focus area:** {risk_focus}\n")
+
+        for pc in ctx.phases:
+            # Check which risk details in this phase match the focus
+            matching = []
+            for rd in pc.risk_details:
+                searchable = rd.risk.description.lower()
+                if rd.control_mapping:
+                    searchable += " " + rd.control_mapping.control_description.lower()
+                if focus_lower in searchable:
+                    matching.append(rd)
+
+            # Also include the phase if its name matches the focus
+            phase_matches = focus_lower in pc.phase.name.lower()
+            if not matching and not phase_matches:
+                continue
+
+            parts.append(f"## Phase {pc.phase.phase_number}: {pc.phase.name}")
+            if pc.phase.description:
+                parts.append(pc.phase.description)
+            parts.append("")
+
+            # Show matching risks, or all risks if only the phase name matched
+            details_to_show = matching if matching else pc.risk_details
+            for rd in details_to_show:
+                parts.append(f"### {rd.risk.risk_code}: {rd.risk.description}")
+                if rd.control_mapping:
+                    cm = rd.control_mapping
+                    parts.append(f"**Expected Control ({cm.control_type}):** {cm.control_description}")
+                    if cm.framework_refs:
+                        parts.append(f"**Framework Refs:** {cm.framework_refs}")
+                if rd.testing_procedures:
+                    parts.append("**Testing Procedures:**")
+                    for tp in rd.testing_procedures:
+                        parts.append(f"  {tp.step_number}. {tp.procedure}")
+                if rd.evidence_requirements:
+                    parts.append("**Evidence Required:**")
+                    for ev in rd.evidence_requirements:
+                        mandatory = "MANDATORY" if ev.is_mandatory else "Optional"
+                        parts.append(f"  - [{mandatory}] {ev.description}")
+                parts.append("")
+
+        # If nothing matched the filter, return full context with a note
+        if len(parts) <= 2:
+            return (
+                f"**No risks matched '{risk_focus}'.** Showing full programme:\n\n"
+                + ctx.to_llm_context()
+            )
+
+        return "\n".join(parts)
+
+    # ================================================================
     # FRAMEWORK TOOLS
     # ================================================================
 
